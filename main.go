@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	_ "embed"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -11,25 +13,83 @@ import (
 	"time"
 )
 
-//go:embed index.js
-var trackScript string
-
-func main() {
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Hour)
-
-	<-every(ctx, cancel, 1*time.Second, func() { trackParcelInNode("LX897146572CN") })
+type Config struct {
+	TrackingCodes []string `json:"tracking_codes"`
+	Trackers      struct {
+		ParcelsApp ParcelsAppConfig `json:"parcels_app"`
+	} `json:"trackers"`
+	UpdateEvery time.Duration `json:"update_every"`
 }
 
-func trackParcelInNode(tracker string) {
+func NewConfig(path string) (Config, error) {
+	var cfg Config
+
+	file, openErr := os.Open(path)
+	if openErr != nil {
+		return cfg, openErr
+	}
+
+	content, readErr := io.ReadAll(file)
+	if readErr != nil {
+		return cfg, readErr
+	}
+
+	return cfg, json.Unmarshal(content, &cfg)
+}
+
+type (
+	ParcelsAppTracker struct {
+		cfg ParcelsAppConfig
+	}
+
+	ParcelsAppConfig struct {
+		NodePath      string `json:"node_path"`
+		CrawlerScript string `json:"crawler_script"`
+	}
+)
+
+func NewParcelsAppTracker(cfg ParcelsAppConfig) ParcelsAppTracker {
+	return ParcelsAppTracker{cfg: cfg}
+}
+
+func (t ParcelsAppTracker) TrackParcels(trackingCodes ...string) error {
+	for _, trackingCode := range trackingCodes {
+		if err := t.TrackParcel(trackingCode); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (t ParcelsAppTracker) TrackParcel(trackingCode string) error {
 	result, err := exec.
-		Command("add path here", "index.js", tracker).
+		Command(t.cfg.NodePath, t.cfg.CrawlerScript, trackingCode).
 		Output()
 
 	if err != nil {
-		panic("command error: " + err.Error())
+		return err
 	}
 
 	fmt.Printf("%s\n", result)
+	return nil
+}
+
+func main() {
+	cfg, err := NewConfig("config.json")
+	if err != nil {
+		panic(err)
+	}
+
+	parcelsAppTracker := NewParcelsAppTracker(cfg.Trackers.ParcelsApp)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	<-every(
+		ctx,
+		cancel,
+		cfg.UpdateEvery*time.Second,
+		func() { parcelsAppTracker.TrackParcels(cfg.TrackingCodes...) },
+	)
 }
 
 func every(
@@ -53,8 +113,8 @@ func every(
 			case <-sigs:
 				cancel()
 				return
-			case <-ctx.Done():
-				return
+			// case <-ctx.Done(): doesn't make much sense
+			// 	return
 			case <-time.After(timeout):
 				f()
 				continue
@@ -64,28 +124,3 @@ func every(
 
 	return done
 }
-
-// func trackParcel(code string) {
-// 	iso := v8.NewIsolate()
-// 	ctx := v8.NewContext(iso)
-// 	value, err := ctx.RunScript(fmt.Sprintf(trackScript), "track.js")
-
-// 	if err != nil {
-// 		panic("error: " + err.Error())
-// 	}
-
-// 	promise, err := value.AsPromise()
-// 	if err != nil {
-// 		panic("error: " + err.Error())
-// 	}
-
-// 	promise.
-// 		Then(func(info *v8.FunctionCallbackInfo) *v8.Value {
-// 			fmt.Println(info.Args())
-// 			return nil
-// 		}).
-// 		Catch(func(info *v8.FunctionCallbackInfo) *v8.Value {
-// 			fmt.Println(info.Args())
-// 			return nil
-// 		})
-// }
