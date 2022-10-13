@@ -1,0 +1,13 @@
+{
+    "tracking_codes": {
+        "label1": "TRACKING_CODE",
+        "label2": "TRACKING_CODE"
+    },
+    "trackers": {
+        "parcels_app": {
+            "node_path": "YOUR NODE PATH",
+            "crawler_script": "index.js"
+        }
+    },
+    "update_every": 0
+}
