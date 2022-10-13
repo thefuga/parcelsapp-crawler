@@ -124,8 +124,6 @@ func every(
 			case <-sigs:
 				cancel()
 				return
-			// case <-ctx.Done(): doesn't make much sense
-			// 	return
 			case <-time.After(timeout):
 				f()
 				continue
