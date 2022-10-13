@@ -14,7 +14,7 @@ import (
 )
 
 type Config struct {
-	TrackingCodes []string `json:"tracking_codes"`
+	TrackingCodes map[string]string `json:"tracking_codes"`
 	Trackers      struct {
 		ParcelsApp ParcelsAppConfig `json:"parcels_app"`
 	} `json:"trackers"`
@@ -52,9 +52,9 @@ func NewParcelsAppTracker(cfg ParcelsAppConfig) ParcelsAppTracker {
 	return ParcelsAppTracker{cfg: cfg}
 }
 
-func (t ParcelsAppTracker) TrackParcels(trackingCodes ...string) error {
-	for _, trackingCode := range trackingCodes {
-		if err := t.TrackParcel(trackingCode); err != nil {
+func (t ParcelsAppTracker) TrackParcels(trackingCodes map[string]string) error {
+	for label, code := range trackingCodes {
+		if err := t.TrackParcel(label, code); err != nil {
 			return err
 		}
 	}
@@ -62,8 +62,8 @@ func (t ParcelsAppTracker) TrackParcels(trackingCodes ...string) error {
 	return nil
 }
 
-func (t ParcelsAppTracker) TrackParcel(trackingCode string) error {
-	result, err := exec.
+func (t ParcelsAppTracker) TrackParcel(label, trackingCode string) error {
+	res, err := exec.
 		Command(t.cfg.NodePath, t.cfg.CrawlerScript, trackingCode).
 		Output()
 
@@ -71,7 +71,7 @@ func (t ParcelsAppTracker) TrackParcel(trackingCode string) error {
 		return err
 	}
 
-	fmt.Printf("%s\n", result)
+	fmt.Printf("{\"label\":\"%s\",\"code\":\"%s\",\"result\":%s}", label, trackingCode, res)
 	return nil
 }
 
@@ -88,7 +88,7 @@ func main() {
 		ctx,
 		cancel,
 		cfg.UpdateEvery*time.Second,
-		func() { parcelsAppTracker.TrackParcels(cfg.TrackingCodes...) },
+		func() { parcelsAppTracker.TrackParcels(cfg.TrackingCodes) },
 	)
 }
 
@@ -107,6 +107,10 @@ func every(
 		defer func() { done <- struct{}{} }()
 
 		f()
+
+		if timeout == 0 {
+			return
+		}
 
 		for {
 			select {
