@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -53,12 +54,18 @@ func NewParcelsAppTracker(cfg ParcelsAppConfig) ParcelsAppTracker {
 }
 
 func (t ParcelsAppTracker) TrackParcels(trackingCodes map[string]string) error {
+	var wg sync.WaitGroup
+
+	wg.Add(len(trackingCodes))
 	for label, code := range trackingCodes {
-		if err := t.TrackParcel(label, code); err != nil {
-			return err
-		}
+		go func(l, c string) {
+			defer wg.Done()
+			_ = t.TrackParcel(l, c)
+		}(label, code)
+
 	}
 
+	wg.Wait()
 	return nil
 }
 
