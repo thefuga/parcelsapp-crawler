@@ -1,10 +1,10 @@
-var puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer');
 
 const track = async () => {
     const trackingCode = process.argv[2]
 
     const browser = await puppeteer.launch({
-        headless: false
+        headless: 'chrome',
     });
 
     const page = await browser.newPage();
