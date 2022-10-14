@@ -53,33 +53,41 @@ func NewParcelsAppTracker(cfg ParcelsAppConfig) ParcelsAppTracker {
 	return ParcelsAppTracker{cfg: cfg}
 }
 
-func (t ParcelsAppTracker) TrackParcels(trackingCodes map[string]string) error {
-	var wg sync.WaitGroup
+func (t ParcelsAppTracker) TrackParcels(trackingCodes map[string]string) (chan string, error) {
+	results := make(chan string, len(trackingCodes))
 
-	wg.Add(len(trackingCodes))
-	for label, code := range trackingCodes {
-		go func(l, c string) {
-			defer wg.Done()
-			_ = t.TrackParcel(l, c)
-		}(label, code)
+	go func() {
+		var wg sync.WaitGroup
+		for label, code := range trackingCodes {
+			wg.Add(1)
+			go func(l, c string) {
+				defer wg.Done()
+				res, _ := t.TrackParcel(l, c)
+				results <- fmt.Sprintf(
+					"{\"label\":\"%s\",\"code\":\"%s\",\"results\":%s}",
+					l, c, string(res),
+				)
+			}(label, code)
+		}
 
-	}
+		wg.Wait()
+		close(results)
+	}()
 
-	wg.Wait()
-	return nil
+	return results, nil
 }
 
-func (t ParcelsAppTracker) TrackParcel(label, trackingCode string) error {
+func (t ParcelsAppTracker) TrackParcel(label, trackingCode string) ([]byte, error) {
 	res, err := exec.
 		Command(t.cfg.NodePath, t.cfg.CrawlerScript, trackingCode).
 		Output()
 
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	fmt.Printf("{\"label\":\"%s\",\"code\":\"%s\",\"result\":%s}", label, trackingCode, res)
-	return nil
+	// fmt.Printf("{\"label\":\"%s\",\"code\":\"%s\",\"result\":%s}", label, trackingCode, res)
+	return res, nil
 }
 
 func main() {
@@ -89,14 +97,26 @@ func main() {
 	}
 
 	parcelsAppTracker := NewParcelsAppTracker(cfg.Trackers.ParcelsApp)
-	ctx, cancel := context.WithCancel(context.Background())
+	// ctx, cancel := context.WithCancel(context.Background())
+	// <-every(
+	// 	ctx,
+	// 	cancel,
+	// 	cfg.UpdateEvery*time.Second,
+	// func() { parcelsAppTracker.TrackParcels(cfg.TrackingCodes) },
+	// )
 
-	<-every(
-		ctx,
-		cancel,
-		cfg.UpdateEvery*time.Second,
-		func() { parcelsAppTracker.TrackParcels(cfg.TrackingCodes) },
-	)
+	resultsChan, _ := parcelsAppTracker.TrackParcels(cfg.TrackingCodes)
+	fmt.Print("[")
+	count := len(cfg.TrackingCodes)
+	i := 0
+	for res := range resultsChan {
+		fmt.Print(res)
+		if i < count-1 {
+			fmt.Print(",")
+		}
+		i++
+	}
+	fmt.Print("]")
 }
 
 func every(
