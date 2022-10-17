@@ -6,12 +6,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
-	"os/exec"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/chromedp"
 )
 
 type Config struct {
@@ -44,8 +48,7 @@ type (
 	}
 
 	ParcelsAppConfig struct {
-		NodePath      string `json:"node_path"`
-		CrawlerScript string `json:"crawler_script"`
+		ChromePath string `json:"node_path"`
 	}
 )
 
@@ -78,16 +81,58 @@ func (t ParcelsAppTracker) TrackParcels(trackingCodes map[string]string) (chan s
 }
 
 func (t ParcelsAppTracker) TrackParcel(label, trackingCode string) ([]byte, error) {
-	res, err := exec.
-		Command(t.cfg.NodePath, t.cfg.CrawlerScript, trackingCode).
-		Output()
+	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.Flag("headless", "chrome"),
+		chromedp.Flag("disable-gpu", true),
+		chromedp.Flag("no-sandbox", true),
+	)
 
-	if err != nil {
-		return nil, err
+	if t.cfg.ChromePath != "" {
+		opts = append(opts, chromedp.ExecPath(t.cfg.ChromePath))
 	}
 
-	// fmt.Printf("{\"label\":\"%s\",\"code\":\"%s\",\"result\":%s}", label, trackingCode, res)
-	return res, nil
+	allocCtx, cancel := chromedp.NewExecAllocator(context.Background(), opts...)
+	defer cancel()
+
+	ctx, cancel := chromedp.NewContext(
+		allocCtx,
+	)
+	defer cancel()
+
+	var requestID network.RequestID
+	done := make(chan struct{})
+	chromedp.ListenTarget(ctx, func(ev interface{}) {
+		switch event := ev.(type) {
+		case *network.EventRequestWillBeSent:
+			if strings.Contains(event.Request.URL, "api/v2/parcels") {
+				requestID = event.RequestID
+			}
+		case *network.EventLoadingFinished:
+			if requestID == event.RequestID {
+				close(done)
+			}
+		}
+	})
+
+	err := chromedp.Run(
+		ctx,
+		chromedp.Navigate("https://parcelsapp.com/widget"),
+		chromedp.SetValue("#track-input", trackingCode),
+		chromedp.Click("#track-button", chromedp.NodeVisible),
+	)
+
+	<-done
+
+	var responseBody []byte
+	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		var err error
+		responseBody, err = network.GetResponseBody(requestID).Do(ctx)
+		return err
+	})); err != nil {
+		log.Fatal(err)
+	}
+
+	return responseBody, err
 }
 
 func main() {
@@ -97,13 +142,6 @@ func main() {
 	}
 
 	parcelsAppTracker := NewParcelsAppTracker(cfg.Trackers.ParcelsApp)
-	// ctx, cancel := context.WithCancel(context.Background())
-	// <-every(
-	// 	ctx,
-	// 	cancel,
-	// 	cfg.UpdateEvery*time.Second,
-	// func() { parcelsAppTracker.TrackParcels(cfg.TrackingCodes) },
-	// )
 
 	resultsChan, _ := parcelsAppTracker.TrackParcels(cfg.TrackingCodes)
 	fmt.Print("[")
